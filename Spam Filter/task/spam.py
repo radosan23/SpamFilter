@@ -3,6 +3,7 @@ import re
 import spacy
 from spacy.lang.en.stop_words import STOP_WORDS
 import string
+import itertools
 
 
 def preprocess(text, model):
@@ -34,6 +35,16 @@ def bag_of_words(df, vocabulary):
     return pd.concat([df, *new_cols], axis=1)
 
 
+def naive_bayes(df, vocabulary, alpha=1):
+    n_voc = len(vocabulary)
+    spam_words = ' '.join(df[df['Target'] == 'spam']['SMS'].tolist()).split()
+    ham_words = ' '.join(df[df['Target'] == 'ham']['SMS'].tolist()).split()
+    spam_prob = [(spam_words.count(x) + alpha) / (len(spam_words) + alpha * n_voc) for x in vocabulary]
+    ham_prob = [(ham_words.count(x) + alpha) / (len(ham_words) + alpha * n_voc) for x in vocabulary]
+    df_nb = pd.DataFrame({'Spam Probability': spam_prob, 'Ham Probability': ham_prob}, index=vocabulary)
+    return df_nb
+
+
 def main():
     df = pd.read_csv('../data/spam.csv', header=0, names=['Target', 'SMS'], usecols=[0, 1],
                      encoding='iso-8859-1')
@@ -42,11 +53,11 @@ def main():
     df.SMS = df.SMS.apply(preprocess, args=(model,))
     df_train, df_test = train_test_split(df, train_ratio=0.8, random=43)
     vocabulary = make_vocabulary(df_train)
-    df_train_bow = bag_of_words(df_train, vocabulary=vocabulary)
+    df_train_nb = naive_bayes(df_train, vocabulary=vocabulary)
 
-    pd.options.display.max_columns = df_train_bow.shape[1]
-    pd.options.display.max_rows = df_train_bow.shape[0]
-    print(df_train_bow.iloc[:200, :50])
+    pd.options.display.max_columns = df_train_nb.shape[1]
+    pd.options.display.max_rows = df_train_nb.shape[0]
+    print(df_train_nb.iloc[:200, :])
 
 
 if __name__ == '__main__':
