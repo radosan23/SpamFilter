@@ -3,7 +3,7 @@ import re
 import spacy
 from spacy.lang.en.stop_words import STOP_WORDS
 import string
-import itertools
+import numpy as np
 
 
 def preprocess(text, model):
@@ -16,9 +16,9 @@ def preprocess(text, model):
 
 
 def train_test_split(df, train_ratio=0.8, random=None):
-    df = df.sample(frac=1, random_state=random, ignore_index=True)
+    df = df.sample(frac=1, random_state=random, ignore_index=False)
     train_last_index = int(df.shape[0] * train_ratio)
-    return df[:train_last_index], df[train_last_index:]
+    return df.iloc[:train_last_index], df.iloc[train_last_index:]
 
 
 def make_vocabulary(df):
@@ -35,7 +35,7 @@ def bag_of_words(df, vocabulary):
     return pd.concat([df, *new_cols], axis=1)
 
 
-def naive_bayes(df, vocabulary, alpha=1):
+def ham_spam_prob(df, vocabulary, alpha=1):
     n_voc = len(vocabulary)
     spam_words = ' '.join(df[df['Target'] == 'spam']['SMS'].tolist()).split()
     ham_words = ' '.join(df[df['Target'] == 'ham']['SMS'].tolist()).split()
@@ -43,6 +43,17 @@ def naive_bayes(df, vocabulary, alpha=1):
     ham_prob = [(ham_words.count(x) + alpha) / (len(ham_words) + alpha * n_voc) for x in vocabulary]
     df_nb = pd.DataFrame({'Spam Probability': spam_prob, 'Ham Probability': ham_prob}, index=vocabulary)
     return df_nb
+
+
+def naive_bayes(sms, prob, p_spam, p_ham):
+    p_spam_sms = p_spam * np.prod([prob.loc[word, 'Spam Probability'] for word in sms.split() if word in prob.index])
+    p_ham_sms = p_ham * np.prod([prob.loc[word, 'Ham Probability'] for word in sms.split() if word in prob.index])
+    if p_spam_sms > p_ham_sms:
+        return 'spam'
+    elif p_ham_sms > p_spam_sms:
+        return 'ham'
+    else:
+        return 'unknown'
 
 
 def main():
@@ -53,11 +64,14 @@ def main():
     df.SMS = df.SMS.apply(preprocess, args=(model,))
     df_train, df_test = train_test_split(df, train_ratio=0.8, random=43)
     vocabulary = make_vocabulary(df_train)
-    df_train_nb = naive_bayes(df_train, vocabulary=vocabulary)
+    p_spam = df_train[df_train['Target'] == 'spam'].shape[0] / df_train.shape[0]
+    p_ham = df_train[df_train['Target'] == 'ham'].shape[0] / df_train.shape[0]
+    df_train_prob = ham_spam_prob(df_train, vocabulary=vocabulary)
+    df_test['Predicted'] = df_test['SMS'].apply(naive_bayes, args=(df_train_prob, p_spam, p_ham))
 
-    pd.options.display.max_columns = df_train_nb.shape[1]
-    pd.options.display.max_rows = df_train_nb.shape[0]
-    print(df_train_nb.iloc[:200, :])
+    pd.options.display.max_columns = df_test.shape[1]
+    pd.options.display.max_rows = df_test.shape[0]
+    print(df_test.rename(columns={'Target': 'Actual'}).iloc[:50][['Predicted', 'Actual']])
 
 
 if __name__ == '__main__':
