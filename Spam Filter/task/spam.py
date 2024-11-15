@@ -56,6 +56,17 @@ def naive_bayes(sms, prob, p_spam, p_ham):
         return 'unknown'
 
 
+def calc_metrics(pred):
+    pred['val'] = 1
+    conf_mat = pd.pivot_table(pred, values=['val'], index=['Target'], columns=['Predicted'], aggfunc='sum')
+    accuracy = ((conf_mat.iloc[1, 1] + conf_mat.iloc[0, 0]) /
+                (conf_mat.iloc[1, 1] + conf_mat.iloc[0, 0] + conf_mat.iloc[0, 1] + conf_mat.iloc[1, 0]))
+    recall = (conf_mat.iloc[1, 1]) / (conf_mat.iloc[1, 1] + conf_mat.iloc[1, 0])
+    precision = (conf_mat.iloc[1, 1]) / (conf_mat.iloc[1, 1] + conf_mat.iloc[0, 1])
+    f1 = (2 * precision * recall) / (precision + recall)
+    return {'Accuracy': accuracy, 'Recall': recall, 'Precision': precision, 'F1': f1}
+
+
 def main():
     df = pd.read_csv('../data/spam.csv', header=0, names=['Target', 'SMS'], usecols=[0, 1],
                      encoding='iso-8859-1')
@@ -68,10 +79,11 @@ def main():
     p_ham = df_train[df_train['Target'] == 'ham'].shape[0] / df_train.shape[0]
     df_train_prob = ham_spam_prob(df_train, vocabulary=vocabulary)
     df_test['Predicted'] = df_test['SMS'].apply(naive_bayes, args=(df_train_prob, p_spam, p_ham))
+    metrics = calc_metrics(df_test)
 
     pd.options.display.max_columns = df_test.shape[1]
     pd.options.display.max_rows = df_test.shape[0]
-    print(df_test.rename(columns={'Target': 'Actual'}).iloc[:50][['Predicted', 'Actual']])
+    print(metrics)
 
 
 if __name__ == '__main__':
