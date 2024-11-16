@@ -4,6 +4,8 @@ import spacy
 from spacy.lang.en.stop_words import STOP_WORDS
 import string
 import numpy as np
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
 
 
 def preprocess(text, model):
@@ -15,7 +17,7 @@ def preprocess(text, model):
     return ' '.join(tokens)
 
 
-def train_test_split(df, train_ratio=0.8, random=None):
+def train_test_split2(df, train_ratio=0.8, random=None):
     df = df.sample(frac=1, random_state=random, ignore_index=False)
     train_last_index = int(df.shape[0] * train_ratio)
     return df.iloc[:train_last_index], df.iloc[train_last_index:]
@@ -41,8 +43,10 @@ def ham_spam_prob(df, vocabulary, alpha=1):
     ham_words = ' '.join(df[df['Target'] == 'ham']['SMS'].tolist()).split()
     spam_prob = [(spam_words.count(x) + alpha) / (len(spam_words) + alpha * n_voc) for x in vocabulary]
     ham_prob = [(ham_words.count(x) + alpha) / (len(ham_words) + alpha * n_voc) for x in vocabulary]
-    df_nb = pd.DataFrame({'Spam Probability': spam_prob, 'Ham Probability': ham_prob}, index=vocabulary)
-    return df_nb
+    df_prob = pd.DataFrame({'Spam Probability': spam_prob, 'Ham Probability': ham_prob}, index=vocabulary)
+    p_spam = df[df['Target'] == 'spam'].shape[0] / df.shape[0]
+    p_ham = df[df['Target'] == 'ham'].shape[0] / df.shape[0]
+    return df_prob, p_spam, p_ham
 
 
 def naive_bayes(sms, prob, p_spam, p_ham):
@@ -56,9 +60,15 @@ def naive_bayes(sms, prob, p_spam, p_ham):
         return 'unknown'
 
 
+def skl_metrics(y_true, y_pred):
+    return {'Accuracy': accuracy_score(y_true, y_pred),
+            'Recall': recall_score(y_true, y_pred),
+            'Precision': precision_score(y_true, y_pred),
+            'F1': f1_score(y_true, y_pred)}
+
+
 def calc_metrics(pred):
-    pred['val'] = 1
-    conf_mat = pd.pivot_table(pred, values=['val'], index=['Target'], columns=['Predicted'], aggfunc='sum')
+    conf_mat = pd.pivot_table(pred, index=['Target'], columns=['Predicted'], aggfunc='count')
     accuracy = ((conf_mat.iloc[1, 1] + conf_mat.iloc[0, 0]) /
                 (conf_mat.iloc[1, 1] + conf_mat.iloc[0, 0] + conf_mat.iloc[0, 1] + conf_mat.iloc[1, 0]))
     recall = (conf_mat.iloc[1, 1]) / (conf_mat.iloc[1, 1] + conf_mat.iloc[1, 0])
@@ -68,21 +78,32 @@ def calc_metrics(pred):
 
 
 def main():
+    # prepare data
+    pd.set_option('future.no_silent_downcasting', True)
     df = pd.read_csv('../data/spam.csv', header=0, names=['Target', 'SMS'], usecols=[0, 1],
                      encoding='iso-8859-1')
-
     model = spacy.load('en_core_web_sm')
     df.SMS = df.SMS.apply(preprocess, args=(model,))
-    df_train, df_test = train_test_split(df, train_ratio=0.8, random=43)
+    df_train, df_test = train_test_split2(df, train_ratio=0.8, random=43)
     vocabulary = make_vocabulary(df_train)
-    p_spam = df_train[df_train['Target'] == 'spam'].shape[0] / df_train.shape[0]
-    p_ham = df_train[df_train['Target'] == 'ham'].shape[0] / df_train.shape[0]
-    df_train_prob = ham_spam_prob(df_train, vocabulary=vocabulary)
-    df_test['Predicted'] = df_test['SMS'].apply(naive_bayes, args=(df_train_prob, p_spam, p_ham))
-    metrics = calc_metrics(df_test)
 
-    pd.options.display.max_columns = df_test.shape[1]
-    pd.options.display.max_rows = df_test.shape[0]
+    # implemented naive bayes classifier
+    df_train_prob, p_spam, p_ham = ham_spam_prob(df_train, vocabulary=vocabulary)
+    df_nb = df_test.copy()
+    df_nb['Predicted'] = df_nb['SMS'].apply(naive_bayes, args=(df_train_prob, p_spam, p_ham))
+    metrics = calc_metrics(df_nb)
+
+    # naive bayes from sklearn
+    bow_train = bag_of_words(df_train, vocabulary).replace({'Target': {'ham': 0, 'spam': 1}}).infer_objects(copy=False)
+    bow_test = bag_of_words(df_test, vocabulary).replace({'Target': {'ham': 0, 'spam': 1}}).infer_objects(copy=False)
+    model_nb = MultinomialNB()
+    model_nb.fit(bow_train.iloc[:, 2:], bow_train['Target'])
+    prediction = model_nb.predict(bow_test.iloc[:, 2:])
+    metrics_skl = skl_metrics(bow_test['Target'], prediction)
+
+    # pd.options.display.max_columns = bow_test.shape[1]
+    # pd.options.display.max_rows = bow_test.shape[0]
+    print('sklearn NB:', metrics_skl, 'custom NB:', sep='\n')
     print(metrics)
 
 
